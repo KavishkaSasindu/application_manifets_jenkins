@@ -1,9 +1,9 @@
 pipeline {
-    agent: any
+    agent any
     stages {
         stage('docker env') {
             steps {
-                sh'''
+                sh '''
                     docker --version
                     docker ps -a
                 '''
