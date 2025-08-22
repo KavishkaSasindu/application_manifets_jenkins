@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Focus & Tasks — Mini App</title>
+  <meta name="description" content="A tiny, modern, single-file web app: Pomodoro-style focus timer + to‑do list with localStorage and dark/light themes." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>⏱️</text></svg>">
+  <style>
+    /* === Design Tokens === */
+    :root {
+      --bg: 245 245 248;
+      --fg: 20 20 30;
+      --muted: 105 105 120;
+      --card: 255 255 255;
+      --accent: 98 102 255; /* indigo */
+      --accent-2: 117 221 180; /* mint */
+      --ring: 0 0 0;
+      --shadow: 0 10px 30px rgba(0,0,0,.08);
+      --radius: 18px;
+      --glass: rgba(255,255,255,.65);
+    }
+    [data-theme="dark"]:root {
+      --bg: 9 11 18;
+      --fg: 236 237 240;
+      --muted: 165 168 182;
+      --card: 20 23 33;
+      --accent: 119 125 255;
+      --accent-2: 120 220 180;
+      --ring: 119 125 255;
+      --shadow: 0 12px 40px rgba(0,0,0,.45);
+      --glass: rgba(255,255,255,.06);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: rgb(var(--fg));
+      background: radial-gradient(1200px 800px at 10% -10%, rgba(98,102,255,.15), transparent 60%),
+                  radial-gradient(800px 600px at 110% 10%, rgba(117,221,180,.12), transparent 60%),
+                  rgb(var(--bg));
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+
+    .app {
+      width: min(980px, 100%);
+      display: grid;
+      gap: 18px;
+      grid-template-columns: 1.1fr .9fr;
+    }
+    @media (max-width: 860px){
+      .app { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: linear-gradient(180deg, var(--glass), rgba(255,255,255,0));
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    header.card {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 18px;
+    }
+    .title { display:flex; gap:10px; align-items:center; }
+    .title .logo { width: 36px; height: 36px; display:grid; place-items:center; border-radius: 12px; background: rgba(var(--accent), .18); }
+    .title h1 { font-size: 18px; margin: 0; letter-spacing:.2px; }
+    .subtitle { color: rgb(var(--muted)); font-size: 12.5px; margin-top: 2px; }
+
+    .row { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 680px){ .row { grid-template-columns: 1fr; } }
+
+    /* === Timer === */
+    .timer {
+      display:grid; grid-template-columns: auto 1fr; gap: 18px; align-items:center;
+    }
+    .ring {
+      --size: 150px;
+      width: var(--size); height: var(--size);
+      border-radius: 999px;
+      display:grid; place-items:center;
+      background: conic-gradient(rgb(var(--accent)) var(--pct, 0%), rgba(var(--fg), .12) 0);
+      transition: background .4s ease;
+      box-shadow: inset 0 0 0 8px rgba(255,255,255,.06), var(--shadow);
+    }
+    .ring-inner {
+      width: calc(var(--size) - 24px); height: calc(var(--size) - 24px);
+      border-radius: 999px; background: rgb(var(--card));
+      display: grid; place-items: center; text-align: center;
+      padding: 8px;
+    }
+    .time { font-size: 28px; font-weight: 700; letter-spacing: 1px; }
+    .mode { font-size: 12px; color: rgb(var(--muted)); margin-top: 4px; }
+
+    .controls { display:flex; flex-wrap:wrap; gap: 8px; }
+    button, .select {
+      appearance: none; border: 1px solid rgba(255,255,255,.06);
+      background: linear-gradient(180deg, rgba(var(--fg), .08), rgba(var(--fg), .02));
+      color: rgb(var(--fg));
+      padding: 10px 12px; border-radius: 12px; cursor: pointer; font-weight: 600;
+      transition: transform .06s ease, background .2s ease, border-color .2s ease;
+    }
+    button:hover, .select:hover { transform: translateY(-1px); }
+    button:active { transform: translateY(0); }
+    .primary { background: linear-gradient(180deg, rgba(var(--accent), .9), rgba(var(--accent), .7)); color: white; border: none; }
+    .ghost { background: transparent; border: 1px dashed rgba(var(--fg), .2); }
+
+    .select { display:flex; align-items:center; gap:6px; }
+    .select select { background: transparent; border: none; color: inherit; font: inherit; outline: none; }
+
+    /* === Tasks === */
+    .tasks { display:grid; gap: 10px; }
+    .input {
+      display:grid; grid-template-columns: 1fr auto; gap: 8px; align-items:center;
+      background: rgb(var(--card)); padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08);
+    }
+    .input input {
+      background: transparent; border: none; outline: none; color: rgb(var(--fg)); font: inherit; padding: 8px 10px;
+    }
+    .task {
+      display:grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items:center;
+      padding: 10px 12px; border-radius: 12px; background: rgb(var(--card)); border: 1px solid rgba(255,255,255,.08);
+    }
+    .task.done { opacity:.6; text-decoration: line-through; }
+    .task .left { display:flex; align-items:center; gap:10px; }
+    .task .handle { cursor: grab; opacity:.6; user-select:none; }
+
+    .muted { color: rgb(var(--muted)); }
+
+    /* === Footer === */
+    footer { text-align:center; font-size:12px; color: rgb(var(--muted)); padding-top: 6px; }
+
+    /* === Theme Toggle === */
+    .toggle {
+      display:flex; gap:8px; align-items:center;
+      background: rgb(var(--card)); padding: 6px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08);
+    }
+    .toggle button { padding: 6px 10px; border-radius: 999px; font-weight:700; }
+    .toggle .active { background: rgb(var(--fg)); color: rgb(var(--bg)); }
+
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: rgba(var(--fg), .08); padding: .1rem .35rem; border-radius: 6px; border: 1px solid rgba(255,255,255,.08); }
+  </style>
+</head>
+<body>
+  <header class="card" aria-label="Header">
+    <div class="title">
+      <div class="logo" aria-hidden="true">⏱️</div>
+      <div>
+        <h1>Focus & Tasks</h1>
+        <div class="subtitle">Tiny productivity app — timer + to‑do with local save</div>
+      </div>
+    </div>
+    <div class="toggle" role="group" aria-label="Theme toggle">
+      <button id="lightBtn" title="Light theme" aria-pressed="false">☀️</button>
+      <button id="darkBtn" class="active" title="Dark theme" aria-pressed="true">🌙</button>
+    </div>
+  </header>
+
+  <main class="app" aria-live="polite">
+    <section class="card" aria-label="Timer">
+      <div class="timer">
+        <div class="ring" id="ring" style="--pct: 0%">
+          <div class="ring-inner">
+            <div class="time" id="time">25:00</div>
+            <div class="mode" id="mode">Focus</div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button id="start" class="primary">Start</button>
+          <button id="pause">Pause</button>
+          <button id="reset" class="ghost">Reset</button>
+          <span class="select" title="Duration">
+            ⏲️ <label class="visually-hidden" for="duration">Duration</label>
+            <select id="duration">
+              <option value="15">15 min</option>
+              <option value="20">20 min</option>
+              <option value="25" selected>25 min</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+            </select>
+          </span>
+          <span class="muted">Tip: press <span class="kbd">Space</span> to start/pause</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Tasks">
+      <div class="tasks">
+        <div class="input">
+          <input id="newTask" placeholder="Add a task and hit Enter…" autocomplete="off" />
+          <button id="addTask" class="primary">Add</button>
+        </div>
+        <div id="taskList" aria-live="polite"></div>
+        <div class="muted" id="emptyState">No tasks yet. Touch grass, or add one ↑</div>
+        <div class="row">
+          <button id="clearDone" class="ghost">Clear completed</button>
+          <button id="clearAll" class="ghost">Clear all</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Built with ❤️ — stores your data in your browser. No servers, no sign‑up.
+  </footer>
+
+  <script>
+    // === Utilities ===
+    const $ = sel => document.querySelector(sel);
+    const el = (tag, props = {}, ...children) => {
+      const n = document.createElement(tag);
+      Object.assign(n, props);
+      for (const c of children) n.append(c);
+      return n;
+    };
+
+    // === Theme Toggle ===
+    const lightBtn = $('#lightBtn');
+    const darkBtn = $('#darkBtn');
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    if (savedTheme === 'light') { lightBtn.classList.add('active'); lightBtn.setAttribute('aria-pressed','true'); darkBtn.classList.remove('active'); darkBtn.setAttribute('aria-pressed','false'); }
+    lightBtn.addEventListener('click', () => setTheme('light'));
+    darkBtn.addEventListener('click', () => setTheme('dark'));
+    function setTheme(t){
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem('theme', t);
+      for (const b of [lightBtn, darkBtn]) { b.classList.remove('active'); b.setAttribute('aria-pressed','false'); }
+      (t==='light'?lightBtn:darkBtn).classList.add('active');
+      (t==='light'?lightBtn:darkBtn).setAttribute('aria-pressed','true');
+    }
+
+    // === Timer Logic ===
+    const timeEl = $('#time');
+    const ring = $('#ring');
+    const modeEl = $('#mode');
+    const startBtn = $('#start');
+    const pauseBtn = $('#pause');
+    const resetBtn = $('#reset');
+    const durationSel = $('#duration');
+
+    let total = (parseInt(localStorage.getItem('duration')) || 25) * 60;
+    let remaining = parseInt(localStorage.getItem('remaining')) || total;
+    let ticking = false;
+    let rafId = null;
+    let lastTick = null;
+
+    durationSel.value = String(total/60);
+    updateTime();
+    updateRing();
+
+    function updateTime(){
+      const m = Math.floor(remaining / 60).toString().padStart(2,'0');
+      const s = Math.floor(remaining % 60).toString().padStart(2,'0');
+      timeEl.textContent = `${m}:${s}`;
+      modeEl.textContent = ticking ? 'Focusing…' : 'Focus';
+      localStorage.setItem('remaining', remaining);
+    }
+    function updateRing(){
+      const pct = 100 * (1 - remaining / total);
+      ring.style.setProperty('--pct', pct + '%');
+    }
+
+    function tick(now){
+      if (!lastTick) lastTick = now;
+      const dt = (now - lastTick) / 1000; // seconds
+      lastTick = now;
+      if (ticking){
+        remaining = Math.max(0, remaining - dt);
+        updateTime();
+        updateRing();
+        if (remaining <= 0){
+          ticking = false;
+          notify('Time\'s up! Nice focus session.');
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+
+    startBtn.addEventListener('click', () => { ticking = true; });
+    pauseBtn.addEventListener('click', () => { ticking = false; });
+    resetBtn.addEventListener('click', () => { ticking = false; remaining = total; updateTime(); updateRing(); });
+    durationSel.addEventListener('change', () => {
+      const mins = parseInt(durationSel.value);
+      total = mins * 60; remaining = total; updateTime(); updateRing();
+      localStorage.setItem('duration', mins);
+    });
+
+    // Space to start/pause
+    window.addEventListener('keydown', (e)=>{
+      if (e.code === 'Space' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+        e.preventDefault(); ticking = !ticking; }
+    });
+
+    // Notification (optional)
+    async function notify(msg){
+      try {
+        if (Notification && Notification.permission !== 'denied'){
+          if (Notification.permission !== 'granted') await Notification.requestPermission();
+          if (Notification.permission === 'granted') new Notification('⏱️ Focus & Tasks', { body: msg });
+        }
+      } catch {}
+      // Always also beep lightly
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+      o.start(); o.stop(ctx.currentTime + 0.32);
+    }
+
+    // === Tasks Logic ===
+    const newTask = $('#newTask');
+    const addTaskBtn = $('#addTask');
+    const taskList = $('#taskList');
+    const emptyState = $('#emptyState');
+    const clearDone = $('#clearDone');
+    const clearAll = $('#clearAll');
+
+    let tasks = JSON.parse(localStorage.getItem('tasks')||'[]');
+    renderTasks();
+
+    function persist(){ localStorage.setItem('tasks', JSON.stringify(tasks)); }
+
+    function renderTasks(){
+      taskList.innerHTML = '';
+      if (!tasks.length) { emptyState.style.display = 'block'; return; }
+      emptyState.style.display = 'none';
+      tasks.forEach((t, idx) => taskList.append(taskItem(t, idx)));
+    }
+
+    function taskItem(t, idx){
+      const checkbox = el('input', { type:'checkbox', checked: t.done, title:'Toggle done', ariaLabel:'Toggle done' });
+      const txt = el('input', { value: t.text, className:'task-text', title:'Edit text' });
+      txt.addEventListener('change', ()=> { t.text = txt.value.trim(); persist(); });
+      const del = el('button', { textContent:'Delete', className:'ghost', title:'Delete task' });
+      del.addEventListener('click', ()=> { tasks.splice(idx,1); persist(); renderTasks(); });
+      checkbox.addEventListener('change', ()=> { t.done = checkbox.checked; persist(); renderTasks(); });
+      const item = el('div', { className:'task' + (t.done?' done':'') },
+        el('div', { className:'left' }, el('span', { className:'handle', title:'Drag to reorder' }, '⋮⋮'), checkbox),
+        el('div', {}, txt),
+        el('div', {}, del)
+      );
+      // Drag reorder (simple)
+      item.draggable = true;
+      item.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); item.style.opacity = .5; });
+      item.addEventListener('dragend', () => { item.style.opacity = 1; });
+      item.addEventListener('dragover', e => e.preventDefault());
+      item.addEventListener('drop', e => {
+        e.preventDefault();
+        const from = parseInt(e.dataTransfer.getData('text/plain'));
+        const to = idx;
+        if (from === to) return;
+        const [moved] = tasks.splice(from, 1);
+        tasks.splice(to, 0, moved);
+        persist(); renderTasks();
+      });
+      return item;
+    }
+
+    function addTask(){
+      const text = newTask.value.trim();
+      if (!text) return;
+      tasks.push({ text, done:false });
+      newTask.value = ''; persist(); renderTasks();
+    }
+    addTaskBtn.addEventListener('click', addTask);
+    newTask.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') addTask(); });
+
+    clearDone.addEventListener('click', ()=>{ tasks = tasks.filter(t=>!t.done); persist(); renderTasks(); });
+    clearAll.addEventListener('click', ()=>{ if (confirm('Delete all tasks?')) { tasks = []; persist(); renderTasks(); } });
+
+    // Accessibility tweak: visually hidden labels
+    const vh = document.createElement('style');
+    vh.textContent = `.visually-hidden{ position:absolute!important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }`;
+    document.head.appendChild(vh);
+  </script>
+</body>
+</html>
